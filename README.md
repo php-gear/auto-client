@@ -1,5 +1,5 @@
 # Auto Client
-##### A command-line tool to generate a Javascript client-side API for a PHP REST API
+##### A command-line tool to generate Javascript client-side APIs from REST PHP APIs
 
 ## Introduction
 
