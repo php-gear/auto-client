@@ -1,0 +1,24 @@
+{
+  "name": "php-gear/auto-client",
+  "license": "MIT",
+  "description": "A command-line tool to generate a Javascript client-side API for a PHP REST API",
+  "keywords": [
+    "plugin",
+    "electro"
+  ],
+  "homepage": "https://github.com/php-gear/auto-client",
+  "authors": [
+    {
+      "name": "Cláudio Silva",
+      "email": "claudiombsilva@gmail.com"
+    }
+  ],
+  "require": {
+    "php": ">=7"
+  },
+  "autoload": {
+    "psr-4": {
+      "PhpGear\\": "src"
+    }
+  }
+}
