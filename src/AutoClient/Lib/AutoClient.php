@@ -353,7 +353,7 @@ JAVASCRIPT;
       if ($hasPayloadTag)
         array_unshift ($params, $payloadType . ' $payload ' . self::PAYLOAD_DESCRIPTION);
       foreach ($params as $param) {
-        list ($type, $name, $desc) = preg_split ('/[ \t]+/', $param, 3);
+        list ($type, $name, $desc) = preg_split ('/[ \t]+/', $param, 3) + ['', '', ''];
         $name = substr ($name, 1);
         if (isset(self::TRANSLATE_TYPES[$type]))
           $type = self::TRANSLATE_TYPES[$type];
@@ -367,7 +367,7 @@ JAVASCRIPT;
       $o[]    = '';
       $fields = self::ensureArray ($doc[self::PAYLOAD_FIELD]);
       foreach ($fields as $field) {
-        list ($type, $name, $desc) = preg_split ('/[ \t]+/', $field, 3);
+        list ($type, $name, $desc) = preg_split ('/[ \t]+/', $field, 3) + ['', '', ''];
         if (isset(self::TRANSLATE_TYPES[$type]))
           $type = self::TRANSLATE_TYPES[$type];
         $o[] = "@param {" . "$type} payload.$name $desc";
@@ -379,7 +379,7 @@ JAVASCRIPT;
     $typecast   = $outDoc ? "/**@type {{$ucname}Promise}*/ " : "";
     $returnType = $outDoc ? "{$ucname}Promise" : "GenericPromise";
     $returns    = $doc['returns'] ?? '';
-    list ($originalType, $retDesc) = (preg_split ('/[ \t]+/', $returns, 2) + [1 => '']);
+    list ($originalType, $retDesc) = (preg_split ('/[ \t]+/', $returns, 2) + ['', '']);
     $o[] = "@returns {{$returnType}} $retDesc";
 
     $methodComment = self::renderDocComment ($o);
