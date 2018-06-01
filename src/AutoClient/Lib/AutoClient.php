@@ -136,14 +136,27 @@ JAVASCRIPT;
       // && !$baseClass->hasMethod ($method->getName ()); // discard inherited methods
     }));
     $apiMethods = array_map (function (ReflectionMethod $method) {
-      $params  = array_map (function (ReflectionParameter $param) {
+      $tags       = $this->parseDocTags ($method->getDocComment ());
+      $paramsDesc = $paramsType = [];
+      foreach (self::ensureArray ($tags['param'] ?? []) as $v) {
+        list ($type, $name, $desc) = preg_split ('/[ \t]+/', $v, 3) + [2 => ''];
+        $name              = substr ($name, 1); // remove leading $
+        $paramsType[$name] = $type;
+        $paramsDesc[$name] = $desc;
+      }
+      $params  = array_map (function (ReflectionParameter $param) use ($paramsDesc, $paramsType) {
+        $default = $param->isDefaultValueAvailable () ? $param->getDefaultValue () : null;
+        // Note: only empty arrays are supported as default values of array type.
+        $default = isset($default) ? preg_replace ('/array\s+.*/s', '[]', var_export ($default, true)) : '';
+
         return [
-          'name'     => $param->name,
-          'required' => !$param->isDefaultValueAvailable (),
-          'default'  => $param->isDefaultValueAvailable () ? $param->getDefaultValue () : null,
+          'name'        => $param->name,
+          'type'        => $paramsType[$param->name] ?? '',
+          'required'    => !$param->isDefaultValueAvailable (),
+          'default'     => $default, // textual representation of the default value, '' for no default
+          'description' => $paramsDesc[$param->name] ?? '',
         ];
       }, $method->getParameters ());
-      $tags    = $this->parseDocTags ($method->getDocComment ());
       $altName = $tags['alias'] ?? '';
       return [
         'serverSideName' => $method->name,
@@ -198,7 +211,7 @@ JAVASCRIPT;
           'ARGS'     => implode (', ', Util::array_prune ([$payload, $fnArgs])),
           'ARGS2'    => $remoteParams,
           'URL'      => "$endpointUrl/$apiUrl$routeParams",
-          'DOC'      => $this->renderMethodDoc ($method['doc'], $ucname, $typecast),
+          'DOC'      => $this->renderMethodDoc ($method, $ucname, $typecast),
           'TYPECAST' => $typecast,
         ]);
         return self::stripEmptyLines ($rendered);
@@ -327,14 +340,15 @@ JAVASCRIPT;
   }
 
   /**
-   * @param array  $doc
+   * @param array  $method   Parsed information about the method.
    * @param string $ucname
    * @param string $typecast [output] A typecast expression.
    * @return string
    */
-  private function renderMethodDoc (array $doc, $ucname, &$typecast)
+  private function renderMethodDoc (array $method, $ucname, &$typecast)
   {
-    $o = [];
+    $doc = $method['doc'];
+    $o   = [];
 
     if ($doc['description']) {
       $o[] = $doc['description'];
@@ -348,13 +362,20 @@ JAVASCRIPT;
     elseif ($payloadType == 'Array[]')
       $payloadType = 'Object[]';
 
-    if (isset($doc['param'])) {
-      $params = self::ensureArray ($doc['param']);
+    if ($params = $method['args']) {
       if ($hasPayloadTag)
-        array_unshift ($params, $payloadType . ' $payload ' . self::PAYLOAD_DESCRIPTION);
+        array_unshift ($params, [
+          'name'        => 'payload',
+          'type'        => $payloadType,
+          'description' => self::PAYLOAD_DESCRIPTION,
+          'required'    => true,
+        ]);
       foreach ($params as $param) {
-        list ($type, $name, $desc) = preg_split ('/[ \t]+/', $param, 3) + ['', '', ''];
-        $name = substr ($name, 1);
+        $name = $param['name'];
+        $type = $param['type'];
+        $desc = $param['description'];
+        if (!$param['required'])
+          $name = isset($param['default']) ? "[$name={$param['default']}]" : "[$name]";
         if (isset(self::TRANSLATE_TYPES[$type]))
           $type = self::TRANSLATE_TYPES[$type];
         $o[] = "@param {" . "$type} $name $desc";
