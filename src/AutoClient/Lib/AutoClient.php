@@ -145,9 +145,14 @@ JAVASCRIPT;
         $paramsDesc[$name] = $desc;
       }
       $params  = array_map (function (ReflectionParameter $param) use ($paramsDesc, $paramsType) {
-        $default = $param->isDefaultValueAvailable () ? $param->getDefaultValue () : null;
-        // Note: only empty arrays are supported as default values of array type.
-        $default = isset($default) ? preg_replace ('/array\s+.*/s', '[]', var_export ($default, true)) : '';
+        if ($param->isDefaultValueAvailable ()) {
+          $default = $param->getDefaultValue ();
+          // Note: only empty arrays are supported as default values of array type.
+          $default = isset($default)
+            ? preg_replace ('/array\s+.*/s', '[]', var_export ($default, true))
+            : 'null';
+        }
+        else $default = '';
 
         return [
           'name'        => $param->name,
