@@ -19,20 +19,36 @@ use Str;
  * <dl>
  * <dt>&#64;api
  * <dd>Marks the method as being exposed via HTTP.
+ *
  * <dt>&#64;alias methodName
  * <dd>Defines the client-side name of the API method, if it should be different from the server side one.
+ *
+ * <dt>&#64;param type name [description]
+ * <dd>Declares a route parameter that is passed as an argument to the method.
+ *
+ * <dt>&#64;query type name [description]
+ * <dd>Declares a query string parameter that is passed to the server-side API on the URL.
+ * <p>**Note:** Query parameters are encoded in the URL-encoding format (`key=value&key=value...`).
+ * <p>All query parameters must be merged by the caller into a single object as key->value pairs; that object must be
+ * passed to the generated client-side function as the **last** argument on the function's argument list.
+ *
  * <dt>&#64;payload [type]
  * <dd>Declares the API method expects a POST/PUT payload, and the payload type (usually either `array` or
  * `array[]`, defaults to `array`).
+ * <p>The payload must be passed to the generated client-side function as the **first** argument on the function's
+ * argument list.
  * <p>**Note:** on the controller method, the payload will always be loaded as either an associative array holding a
  * single record (for an `array` payload) or an indexed array of records (for an `array[]` payload).
  * <p>**Note:** on the controller method, a JSON payload containing an object will be loaded as an associative array,
  * not as a `StdClass` object!
+ *
  * <dt>&#64;in type name [description]
  * <dd>Defines a payload field. Should only by used fot `object` type payloads.
+ *
  * <dt>&#64;return type [description]
  * <dd>`type` should be either `array` or `array[]`, depending on whether a single record or an array of records is
  * being returned.
+ *
  * <dt>&#64;out type name [description]
  * <dd>Defines a field of the output data.
  * </dl>
@@ -40,8 +56,8 @@ use Str;
 class AutoClient
 {
   const DEFAULT_SERVICE_DESCRIPTION = 'A service that provides access to a remote API via HTTP.';
-
-  const METHOD_DOC_TEMPLATE = <<<'JAVASCRIPT'
+  const INPUT_TAG                   = 'in';
+  const METHOD_DOC_TEMPLATE         = <<<'JAVASCRIPT'
     /**
      * @typedef {Object} ___UCNAME___Type
 ___OUT_TYPE___
@@ -59,21 +75,24 @@ ___OUT_TYPE___
      * @returns ___UCNAME___Promise
      */
 JAVASCRIPT;
-
-  const METHOD_TEMPLATE   = <<<'JAVASCRIPT'
+  const METHOD_TEMPLATE             = <<<'JAVASCRIPT'
 ___DOC___
     this.___NAME___ = function (___ARGS___) {
       return ___TYPECAST___remote.___METHOD___ ('___URL___'___ARGS2___);
     };
 
 JAVASCRIPT;
-  const OUTPUT_FIELD      = 'out';
-  const OUT_TYPE_TEMPLATE = <<<'JAVASCRIPT'
+  const OUTPUT_TAG                  = 'out';
+  const OUT_TYPE_TEMPLATE           = <<<'JAVASCRIPT'
      * @property {___TYPE___} ___NAME___ ___DESCRIPTION___
 JAVASCRIPT;
   /** @var string The automatically generated description for the payload parameter. */
-  const PAYLOAD_DESCRIPTION     = 'The data payload to be sent with the request.';
-  const PAYLOAD_FIELD           = 'in';
+  const PAYLOAD_DESCRIPTION     = 'The data payload to be sent with the request';
+  const PAYLOAD_PARAM           = 'payload';
+  const PAYLOAD_TAG             = 'payload';
+  const QUERY_PARAM             = 'queryParams';
+  const QUERY_PARAM_DESCRIPTION = 'URL query string parameters';
+  const QUERY_TAG               = 'query';
   const REMOTE_SERVICE_TEMPLATE = <<<'JAVASCRIPT'
 /*
  * !!! DO NOT MODIFY THIS FILE !!!
@@ -136,7 +155,9 @@ JAVASCRIPT;
       // && !$baseClass->hasMethod ($method->getName ()); // discard inherited methods
     }));
     $apiMethods = array_map (function (ReflectionMethod $method) {
-      $tags       = $this->parseDocTags ($method->getDocComment ());
+      $tags    = $this->parseDocTags ($method->getDocComment ());
+      $altName = $tags['alias'] ?? '';
+
       $paramsDesc = $paramsType = [];
       foreach (self::ensureArray ($tags['param'] ?? []) as $v) {
         list ($type, $name, $desc) = preg_split ('/[ \t]+/', $v, 3) + [2 => ''];
@@ -144,7 +165,8 @@ JAVASCRIPT;
         $paramsType[$name] = $type;
         $paramsDesc[$name] = $desc;
       }
-      $params  = array_map (function (ReflectionParameter $param) use ($paramsDesc, $paramsType) {
+
+      $params = array_map (function (ReflectionParameter $param) use ($paramsDesc, $paramsType) {
         if ($param->isDefaultValueAvailable ()) {
           $default = $param->getDefaultValue ();
           // Note: only empty arrays are supported as default values of array type.
@@ -153,7 +175,6 @@ JAVASCRIPT;
             : 'null';
         }
         else $default = '';
-
         return [
           'name'        => $param->name,
           'type'        => $paramsType[$param->name] ?? '',
@@ -162,12 +183,22 @@ JAVASCRIPT;
           'description' => $paramsDesc[$param->name] ?? '',
         ];
       }, $method->getParameters ());
-      $altName = $tags['alias'] ?? '';
+
+      $queryParams = array_map (function ($param) {
+        list ($type, $name, $desc) = preg_split ('/[ \t]+/', $param, 3) + [2 => ''];
+        return [
+          'name'        => $name,
+          'type'        => $type,
+          'description' => $desc,
+        ];
+      }, self::ensureArray ($tags[self::QUERY_TAG] ?? []));
+
       return [
         'serverSideName' => $method->name,
         'clientSideName' => $altName ?: $method->name,
         'method'         => Util::str_extract ('/^(get|post|put|delete)/', $method->name, 1, 'get'),
         'args'           => $params,
+        'queryArgs'      => $queryParams,
         'doc'            => $tags,
       ];
     }, $methods);
@@ -198,25 +229,41 @@ JAVASCRIPT;
       'CLASS_DESCRIPTION' => $parseTree['description'],
       'METHODS'           => implode ("\n", array_map (function ($method) use ($endpointUrl) {
         $ucname        = ucfirst ($method['clientSideName']);
-        $hasPayloadTag = isset($method['doc']['payload']);
+        $hasPayloadTag = isset($method['doc'][self::PAYLOAD_TAG]);
         $args          = array_map (function ($arg) {
           return $arg['name'];
         }, $method['args']);
         $routeParams   = $args ? '/:' . implode ('/:', array_keys ($args)) : '';
-        $payload       = $hasPayloadTag ? 'payload' : '';
-        $fnArgs        = implode (', ', $args);
-        $remoteParams  = $fnArgs
+        $payload       = $hasPayloadTag ? self::PAYLOAD_PARAM : '';
+
+        $queryArgs       = $method['queryArgs'];
+        $queryParam      = $queryArgs ? self::QUERY_PARAM : '';
+        $remoteQueryArgs = [];
+        if ($queryArgs) {
+          // Generate URL-encoded key=value pairs
+          $c          = count ($args);
+          $queryPairs = array_map (function ($param) use (&$c, &$remoteQueryArgs) {
+            $remoteQueryArgs[] = self::QUERY_PARAM . '.' . $param['name'];
+            return urlencode ($param['name']) . '=:' . ($c++);
+          }, $queryArgs);
+          // Generate the query string
+          $routeParams .= '?' . implode ('&', $queryPairs);
+        }
+
+        $fnArgs       = implode (', ', array_merge ($args, $remoteQueryArgs));
+        $remoteParams = $fnArgs
           ? (", [$fnArgs]" . ($payload ? ", $payload" : ''))
           : ($payload ? ", null, $payload" : '');
-        $apiUrl        = Str::snake (preg_replace ('/^(get|post|put|delete)/', '', $method['serverSideName']), '-');
-        $rendered      = self::renderTemplate (self::METHOD_TEMPLATE, [
+        $apiUrl       = Str::snake (preg_replace ('/^(get|post|put|delete)/', '', $method['serverSideName']), '-');
+
+        $rendered = self::renderTemplate (self::METHOD_TEMPLATE, [
           'NAME'     => $method['clientSideName'],
           'UCNAME'   => $ucname,
           'METHOD'   => $method['method'],
-          'ARGS'     => implode (', ', Util::array_prune ([$payload, $fnArgs])),
+          'ARGS'     => implode (', ', Util::array_prune ([$payload, implode (', ', $args), $queryParam])),
           'ARGS2'    => $remoteParams,
           'URL'      => "$endpointUrl/$apiUrl$routeParams",
-          'DOC'      => $this->renderMethodDoc ($method, $ucname, $typecast),
+          'DOC'      => $this->renderMethodDoc ($method, $ucname, $typecast, $queryArgs),
           'TYPECAST' => $typecast,
         ]);
         return self::stripEmptyLines ($rendered);
@@ -227,7 +274,7 @@ JAVASCRIPT;
 
   static private function ensureArray ($v)
   {
-    return is_array ($v) ? $v : [$v];
+    return is_null ($v) ? [] : (is_array ($v) ? $v : [$v]);
   }
 
   static private function normalizeLines ($text)
@@ -261,8 +308,8 @@ JAVASCRIPT;
   {
     $o = [];
 
-    if (isset($doc[self::OUTPUT_FIELD])) {
-      $fields = self::ensureArray ($doc[self::OUTPUT_FIELD]);
+    if (isset($doc[self::OUTPUT_TAG])) {
+      $fields = self::ensureArray ($doc[self::OUTPUT_TAG]);
       foreach ($fields as $field) {
         list ($type, $name, $desc) = (preg_split ('/[ \t]+/', $field, 3) + [2 => '']);
         if (isset(self::TRANSLATE_TYPES[$type]))
@@ -345,12 +392,13 @@ JAVASCRIPT;
   }
 
   /**
-   * @param array  $method   Parsed information about the method.
+   * @param array  $method    Parsed information about the method.
    * @param string $ucname
-   * @param string $typecast [output] A typecast expression.
+   * @param string $typecast  [output] A typecast expression.
+   * @param array  $queryArgs Query arguments metadata.
    * @return string
    */
-  private function renderMethodDoc (array $method, $ucname, &$typecast)
+  private function renderMethodDoc (array $method, $ucname, &$typecast, array $queryArgs)
   {
     $doc = $method['doc'];
     $o   = [];
@@ -360,8 +408,8 @@ JAVASCRIPT;
       $o[] = '';
     }
 
-    $hasPayloadTag = isset($doc['payload']);
-    $payloadType   = $hasPayloadTag ? (ucfirst ($doc['payload']) ?: 'Object') : '';
+    $hasPayloadTag = isset($doc[self::PAYLOAD_TAG]);
+    $payloadType   = $hasPayloadTag ? (ucfirst ($doc[self::PAYLOAD_TAG]) ?: 'Object') : '';
     if ($payloadType == 'Array')
       $payloadType = 'Object';
     elseif ($payloadType == 'Array[]')
@@ -370,7 +418,7 @@ JAVASCRIPT;
     if ($params = $method['args']) {
       if ($hasPayloadTag)
         array_unshift ($params, [
-          'name'        => 'payload',
+          'name'        => self::PAYLOAD_PARAM,
           'type'        => $payloadType,
           'description' => self::PAYLOAD_DESCRIPTION,
           'required'    => true,
@@ -389,14 +437,21 @@ JAVASCRIPT;
     else if ($hasPayloadTag)
       $o[] = '@param {' . $payloadType . '} payload ' . self::PAYLOAD_DESCRIPTION;
 
-    if (isset($doc[self::PAYLOAD_FIELD])) {
+    if (isset($doc[self::INPUT_TAG])) {
       $o[]    = '';
-      $fields = self::ensureArray ($doc[self::PAYLOAD_FIELD]);
+      $fields = self::ensureArray ($doc[self::INPUT_TAG]);
       foreach ($fields as $field) {
         list ($type, $name, $desc) = preg_split ('/[ \t]+/', $field, 3) + ['', '', ''];
         if (isset(self::TRANSLATE_TYPES[$type]))
           $type = self::TRANSLATE_TYPES[$type];
-        $o[] = "@param {" . "$type} payload.$name $desc";
+        $o[] = "@param {" . "$type} " . self::PAYLOAD_PARAM . ".$name $desc";
+      }
+    }
+
+    if ($queryArgs) {
+      $o[] = "@param {object} " . self::QUERY_PARAM . " " . self::QUERY_PARAM_DESCRIPTION;
+      foreach ($queryArgs as $arg) {
+        $o[] = "@param {" . "{$arg['type']}} " . self::QUERY_PARAM . ".{$arg['name']} {$arg['description']}";
       }
     }
 
