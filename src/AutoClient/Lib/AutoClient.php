@@ -106,9 +106,12 @@ JAVASCRIPT;
 
   /**
    * ___CLASS_DESCRIPTION___
-   * @param {RemoteService} remote
+   * @name ___CLASS___
+   * @class
+   */
+  /**
    * @constructor
-   * @typedef {___CLASS___} ___CLASS___
+   * @param {RemoteService} remote
    */
   function ___CLASS___ (remote) {
 
