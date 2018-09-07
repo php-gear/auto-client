@@ -66,6 +66,7 @@ ___OUT_TYPE___
      * @class
      * @name ___UCNAME___Promise
      * @extends {GenericPromise}
+     * @description Yields a value of type {@link ___UCNAME___Type}.
      */
     /**
      * @name ___UCNAME___Promise~then
