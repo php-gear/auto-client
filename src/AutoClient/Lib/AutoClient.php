@@ -315,8 +315,13 @@ JAVASCRIPT;
       $fields = self::ensureArray ($doc[self::OUTPUT_TAG]);
       foreach ($fields as $field) {
         list ($type, $name, $desc) = (preg_split ('/[ \t]+/', $field, 3) + [2 => '']);
-        if (isset(self::TRANSLATE_TYPES[$type]))
-          $type = self::TRANSLATE_TYPES[$type];
+        $type = self::toJsType ($type);
+
+        // typedefs do not support the {type?} syntax so, instead, we use the [name] syntax.
+        $type = str_replace ('?', '', $type, $c);
+        if ($c)
+          $name = "[$name]";
+
         $block = self::renderTemplate (self::OUT_TYPE_TEMPLATE, [
           'UCNAME'      => $ucname,
           'NAME'        => $name,
@@ -338,6 +343,17 @@ JAVASCRIPT;
   static private function stripEmptyLines ($docComment)
   {
     return preg_replace ('/^[\r\n]+/m', '', $docComment);
+  }
+
+  private static function toJsType ($type)
+  {
+    // Handle union types (ex: int|string)
+    return implode ('|', array_unique (array_map (function ($type) {
+      // Allow types like int? or int=0
+      return preg_replace_callback ('/^\w+/', function ($m) {
+        return self::TRANSLATE_TYPES[$m[0]] ?? $m[0];
+      }, $type);
+    }, explode ('|', $type))));
   }
 
   private function getDocDescription ($docBlock)
@@ -432,9 +448,8 @@ JAVASCRIPT;
         $desc = $param['description'];
         if (!$param['required'])
           $name = isset($param['default']) ? "[$name={$param['default']}]" : "[$name]";
-        if (isset(self::TRANSLATE_TYPES[$type]))
-          $type = self::TRANSLATE_TYPES[$type];
-        $o[] = "@param {" . "$type} $name $desc";
+        $type = self::toJsType ($type);
+        $o[]  = "@param {" . "$type} $name $desc";
       }
     }
     else if ($hasPayloadTag)
@@ -445,9 +460,10 @@ JAVASCRIPT;
       $fields = self::ensureArray ($doc[self::INPUT_TAG]);
       foreach ($fields as $field) {
         list ($type, $name, $desc) = preg_split ('/[ \t]+/', $field, 3) + ['', '', ''];
-        if (isset(self::TRANSLATE_TYPES[$type]))
-          $type = self::TRANSLATE_TYPES[$type];
-        $o[] = "@param {" . "$type} " . self::PAYLOAD_PARAM . ".$name $desc";
+        $type = self::toJsType ($type);
+        if ($name[0] == '[')
+          $o[] = sprintf ('@param {%s} [%s.%s] %s', $type, self::PAYLOAD_PARAM, substr ($name, 1, -1), $desc);
+        else $o[] = sprintf ("@param {%s} %s.%s %s", $type, self::PAYLOAD_PARAM, $name, $desc);
       }
     }
 
